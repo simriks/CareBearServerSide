@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Live Feed + Pose Detection</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+  <style>
+    body {
+      background: #f9f0e9; /* Soft beige-pink */
+      color: #5d4037; /* Warm brown */
+      text-align: center;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-image: radial-gradient(#d7b29d 1px, transparent 1px);
+      background-size: 20px 20px;
+      position: relative;
+    }
+
+    h1 {
+      color: #c2185b; /* Soft pink */
+      text-shadow: 1px 1px 2px rgba(93, 64, 55, 0.2);
+      font-size: 2.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    #canvas {
+      max-width: 90vw;
+      max-height: 80vh;
+      margin-top: 1rem;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(194, 24, 91, 0.2);
+      border: 4px solid #d7b29d; /* Light brown */
+      background: #f5e3d8; /* Soft pink-beige */
+    }
+
+    #result {
+      margin-top: 20px;
+      font-size: 1.7rem;
+      font-weight: 600;
+      padding: 12px;
+      border-radius: 8px;
+      display: inline-block;
+      min-width: 300px;
+      background: #ffeaea; /* Light pink */
+      box-shadow: 0 2px 8px rgba(93, 64, 55, 0.1);
+
+      /* NEW: Improved contrast text color */
+      color: #7a1c42; /* Deep maroon-pink */
+    }
+
+    #dataOutput {
+      background: #f5e3d8; /* Soft beige */
+      color: #5d4037;
+      padding: 16px;
+      margin: 25px auto;
+      max-width: 600px;
+      border-radius: 12px;
+      text-align: center;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 16px;
+      box-shadow: 0 4px 10px rgba(194, 24, 91, 0.15);
+      border: 2px dashed #d7b29d; /* Light brown */
+    }
+
+    /* Medicine Intake Dropdown */
+    .medicine-dropdown {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: #f5e3d8; /* Soft beige */
+      border: 2px solid #d7b29d; /* Light brown */
+      border-radius: 12px;
+      padding: 10px 15px;
+      box-shadow: 0 4px 10px rgba(194, 24, 91, 0.15);
+      font-family: 'Segoe UI', sans-serif;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .medicine-dropdown:hover {
+      background: #ffeaea; /* Light pink on hover */
+      transform: translateY(-2px);
+      box-shadow: 0 6px 15px rgba(194, 24, 91, 0.2);
+    }
+
+    .medicine-header {
+      color: #c2185b; /* Soft pink */
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .medicine-content {
+      display: none;
+      color: #5d4037; /* Warm brown */
+      font-size: 13px;
+      text-align: left;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #d7b29d;
+    }
+
+    .medicine-dropdown.active .medicine-content {
+      display: block;
+    }
+
+    .medicine-item {
+      margin: 8px 0;
+      padding: 5px 8px;
+      background: #ffeaea; /* Light pink */
+      border-radius: 6px;
+      border: 1px solid #d7b29d;
+    }
+
+    .medicine-time {
+      color: #7a1c42; /* Deep maroon-pink */
+      font-weight: 600;
+    }
+
+    .dropdown-arrow {
+      transition: transform 0.3s ease;
+      color: #c2185b;
+    }
+
+    .medicine-dropdown.active .dropdown-arrow {
+      transform: rotate(180deg);
+    }
+
+    /* Status color adjustments */
+    .standing { color: #1e5631; } /* Darker green (4.65:1 contrast) */
+    .falling { color: #a22; }     /* Darker red (5.12:1 contrast) */
+
+    /* Bear paw decoration */
+    .paw {
+      font-size: 2rem;
+      margin: 0 8px;
+      color: #d7b29d;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+      .medicine-dropdown {
+        position: static;
+        margin: 20px auto;
+        display: inline-block;
+      }
+    }
+  </style> 
+</head>
+<body>
+  <h1>🐻 Live Feed - Pose Model 🐻</h1>
+  
+  <!-- Medicine Intake Dropdown -->
+  <div class="medicine-dropdown" onclick="toggleMedicineDropdown()">
+    <div class="medicine-header">
+      💊 Medicine Schedule
+      <span class="dropdown-arrow">▼</span>
+    </div>
+    <div class="medicine-content">
+      <div class="medicine-item">
+        <strong>Last Medicine Intake:</strong><br>
+        <span class="medicine-time">8:02 am</span>
+      </div>
+      <div class="medicine-item">
+        <strong>Next Medicine Intake:</strong><br>
+        <span class="medicine-time">6:00 pm</span>
+      </div>
+    </div>
+  </div>
+
+  <canvas id="canvas"></canvas><br />
+  <h2 id="result">Analyzing...</h2>
+  <div id="dataOutput">Waiting for data...</div>
+
+  <script>
+    console.log("=== SCRIPT STARTED ===");
+    
+    const MODEL_URL = "public/model/model.json";
+    const METADATA_URL = "public/model/metadata.json";
+    const FRAME_URL_BASE = "/frame";
+
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const resultEl = document.getElementById("result");
+    const dataOutputEl = document.getElementById("dataOutput");
+
+    let model, maxPredictions;
+    let frameCount = 0;
+
+    // Medicine dropdown toggle function
+    function toggleMedicineDropdown() {
+      const dropdown = document.querySelector('.medicine-dropdown');
+      dropdown.classList.toggle('active');
+    }
+
+    async function loadModel() {
+      try {
+        console.log("Loading model from:", MODEL_URL);
+        model = await tmPose.load(MODEL_URL, METADATA_URL);
+        maxPredictions = model.getTotalClasses();
+        console.log("✅ Pose model loaded successfully! Classes:", maxPredictions);
+      } catch (err) {
+        console.error("❌ Error loading model:", err);
+        resultEl.textContent = "Error loading model.";
+      }
+    }
+
+async function refreshFrame() {
+  const imgURL = FRAME_URL_BASE + "?t=" + Date.now();
+  console.log("Fetching image from:", imgURL);
+  
+  const latestImg = new Image();
+  latestImg.crossOrigin = "Anonymous";
+  
+  latestImg.onerror = () => {
+    console.error("❌ Error loading image from server");
+    resultEl.textContent = "Error loading image from server.";
+    console.log("No action.");
+  };
+
+  latestImg.onload = async () => {
+    console.log("✅ Image loaded successfully");
+    
+    canvas.width = latestImg.width;
+    canvas.height = latestImg.height;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(latestImg, 0, 0, canvas.width, canvas.height);
+
+    if (!model) {
+      console.log("⚠️ Model not loaded yet");
+      console.log("No action.");
+      return;
+    }
+
+    try {
+      console.log("🔍 Running pose estimation...");
+      const { pose, posenetOutput } = await model.estimatePose(canvas);
+      console.log("✅ Pose estimated");
+      
+      const prediction = await model.predict(posenetOutput);
+      console.log("✅ Prediction complete");
+
+      let topClass = { className: "", probability: 0 };
+      for (let p of prediction) {
+        if (p.probability > topClass.probability) topClass = p;
+      }
+
+      console.log("🎯 Top prediction:", topClass.className, "(" + (topClass.probability * 100).toFixed(1) + "%)");
+
+      tmPose.drawKeypoints(pose.keypoints, 0.5, ctx);
+      tmPose.drawSkeleton(pose.keypoints, 0.5, ctx);
+
+      const confidence = topClass.probability;
+      const confidencePercent = (confidence * 100).toFixed(1);
+
+      // *** CHANGED: Always update the result display with latest prediction ***
+      resultEl.textContent = `Prediction: ${topClass.className} (${confidencePercent}%)`;
+      
+      dataOutputEl.innerHTML = 
+        `<strong>Latest Result:</strong><br>` +
+        `Class: ${topClass.className}<br>` +
+        `Confidence: ${confidencePercent}%<br>` +
+        `Time: ${new Date().toLocaleTimeString()}<br>`;
+      
+      const classLower = topClass.className.toLowerCase();
+      if (confidence >= 0.7) {
+        if (classLower.includes("normal")) {
+          console.log(`[${new Date().toLocaleTimeString()}] Person is: Standing (${confidencePercent}%)`);
+          resultEl.style.color = "#1e5631";
+        } else if (classLower.includes("fall") || classLower.includes("sleep")) {
+          console.log(`[${new Date().toLocaleTimeString()}] Person is: Falling (${confidencePercent}%)`);
+
+           if (!hasAlertedFall) {
+              alert("MR THOMPSON HAS FALLEN QUICK HELP THEM!!!!");
+              hasAlertedFall = true;
+            }
+
+          resultEl.style.color = "#f44";
+        } else {
+          console.log(`[${new Date().toLocaleTimeString()}] Person is: ${topClass.className} (${confidencePercent}%)`);
+          resultEl.style.color = "#f44";
+        }
+      } else {
+        console.log("No action.");
+        resultEl.style.color = "#fff";
+      }
+      
+    } catch (error) {
+      console.error("❌ Prediction error:", error);
+      // *** CHANGED: Don't update the display on prediction error ***
+      // The resultEl.textContent will keep showing the last successful prediction
+      console.log("No action.");
+    }
+  };
+  
+  latestImg.src = imgURL;
+}
+
+    // Load model then start refreshing frames
+    loadModel().then(() => {
+      console.log("🚀 Starting frame refresh loop");
+      refreshFrame();
+      setInterval(refreshFrame, 1000);
+    });
+  </script>
+</body>
+</html>
