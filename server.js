@@ -1,6 +1,13 @@
+// Add at the top of server.js
+require('dotenv').config();
+
 const express = require('express');
+const path = require('path');
 const app = express();
 const port = 8080;
+
+// Use environment variable
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // Increased limits for faster processing
 app.use(express.json({ limit: '10mb' })); // Reduced from 50mb
@@ -51,6 +58,31 @@ app.get('/frame', (req, res) => {
     res.end(imgBuffer);
   } else {
     res.status(404).send('No image available');
+  }
+});
+
+// Add this to your server.js
+app.post('/api/gemini', async (req, res) => {
+  try {
+    const { prompt, audioData, mimeType } = req.body;
+    
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: prompt ? [{ text: prompt }] : [
+            { text: "Transcribe this audio to English text." },
+            { inlineData: { mimeType, data: audioData } }
+          ]
+        }]
+      })
+    });
+
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
